@@ -2,6 +2,9 @@
 
 import tensorflow as tf
 import input_data
+import os
+
+os.environ['TF_CPP_MIN_VLOG_LEVEL'] = '0'
 
 sess = tf.InteractiveSession()
 
