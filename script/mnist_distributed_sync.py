@@ -33,29 +33,38 @@ def main(_):
             weight      = tf.Variable(tf.zeros([d, m]),              name = 'weight')
             bias        = tf.Variable(tf.zeros([m]),                 name = 'bias') 
             y           = tf.nn.softmax(tf.matmul(x, weight) + bias)
-            global_step = tf.contrib.framework.get_or_create_global_step()
             
             loss        = -tf.reduce_sum(ref * tf.log(y))
-            train_step  = tf.train.GradientDescentOptimizer(0.01).minimize(
-                              loss, global_step = global_step)
+            global_step = tf.contrib.framework.get_or_create_global_step()
+            optimizer   = tf.train.GradientDescentOptimizer(0.01)
+            optimizer   = tf.train.SyncReplicasOptimizer(optimizer,
+                              replicas_to_aggregate = 2,
+                              total_num_replicas = 2)
+            train_step  = optimizer.minimize(loss, global_step = global_step)
             correct     = tf.equal(tf.argmax(y, 1), tf.argmax(ref, 1))
             accuracy    = tf.reduce_mean(tf.cast(correct, "float"))
             init_op     = tf.global_variables_initializer()
 
         # handle stopping after given steps #
-        last_step = 100
-        hooks = [tf.train.StopAtStepHook(last_step = last_step)]
+        last_step = 200
+        is_chief = (FLAGS.task_index == 0)
+        hooks = [optimizer.make_session_run_hook(is_chief)]
 
         # MonitoredTrainingSession take care of session #
         with tf.train.MonitoredTrainingSession(master = server.target,
-                                               is_chief = (FLAGS.task_index == 0), # main task, init, checkpoint, save, restore
+                                               is_chief = is_chief, # main task, init, checkpoint, save, restore
                                                hooks = hooks) as monitor_sess:
             while not monitor_sess.should_stop():
-                batch = mnist.train.next_batch(100)
-                _, step = monitor_sess.run([train_step, global_step],
-                                           feed_dict = {x: batch[0], ref: batch[1]})
+                batch = mnist.train.next_batch(200)
+                _, g_step = monitor_sess.run([train_step, global_step],
+                                feed_dict = {x: batch[0], ref: batch[1]})
                 acc = monitor_sess.run(accuracy, feed_dict = {x: mnist.test.images, ref: mnist.test.labels})
-                print("Step %d in task %d -> accuracy %f" % (step, FLAGS.task_index, acc))
+                print("Step %d in task %d -> accuracy %f" % (g_step, FLAGS.task_index, acc))
+                if g_step == last_step:
+                    break;
+
+            if is_chief:
+                os._exit(0)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
